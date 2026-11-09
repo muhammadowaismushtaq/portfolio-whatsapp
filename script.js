@@ -1,286 +1,613 @@
-// 🎵 Message Sent Sound
-var audio = new Audio("assets/sentmessage.mp3");
+/**
+ * ========================================
+ * WhatsApp-style Portfolio Chat
+ * ========================================
+ *
+ * A small, dependency-free chat that answers questions about Owais as his
+ * "business account" virtual assistant. It is embedded in the main portfolio site
+ * (muhammadowaismushtaq.github.io) as the WhatsApp chat pop-up, and also works on its own.
+ *
+ * How it works:
+ * - Each visitor message is matched against the INTENTS table (keyword patterns).
+ * - The first matching intent's reply is shown after a short "typing…" delay.
+ * - Replies are fixed HTML templates written in this file. Text typed by the visitor is
+ *   only ever inserted with textContent, never as HTML, so it cannot inject markup.
+ *
+ * ========================================
+ */
 
-// 📞 Contact Section
-var contactString = `
-<div class='social'>
-    <a href='mailto:muhammadowaismushtaq@outlook.com'>
-        <div class='socialItem'>
-            <img class='socialItemI' src='images/email.svg' alt='Email'/>
-        </div>
-    </a>
-    <a target='_blank' href='https://github.com/muhammadowaismushtaq'>
-        <div class='socialItem'>
-            <img class='socialItemI' src='images/github.svg' alt='GitHub'/>
-        </div>
-    </a>
-    <a href='https://www.linkedin.com/in/muhammadowaismushtaq' target='_blank' rel='noopener noreferrer'>
-        <div class='socialItem'>
-            <img class='socialItemI' src='images/linkedin.svg' alt='LinkedIn'/>
-        </div>
-    </a>
-</div>
-`;
+'use strict';
 
-// 📄 Resume Section
-var resumeString = `
-<img src='images/resumeThumbnail.png' class='resumeThumbnail' alt='Resume Preview'>
-<div class='downloadSpace'>
-    <div class='pdfname'>
-        <img src='images/pdf.png' alt='PDF Icon'>
-        <label>Resume - Muhammad Owais Mushtaq.pdf</label>
-    </div>
-    <a href='https://github.com/muhammadowaismushtaq/muhammadowaismushtaq.github.io/raw/main/assets/resume/Resume%20-%20Muhammad%20Owais%20Mushtaq.pdf' 
-       download='Resume - Muhammad Owais Mushtaq.pdf' 
-       target='_blank'>
-        <img class='download' src='images/downloadIcon.svg' alt='Download Icon'>
-    </a>
-</div>
-`;
+/* ----------------------------------------
+ * Constants
+ * ---------------------------------------- */
 
-// 📍 Address Section
-var addressString = `
-<div class='mapview'>
-    <iframe 
-        class='map'
-        src='https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d14461.369212989157!2d67.1320497!3d25.022454949999997!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3eb346f4ee2f512f%3A0x75bf3f7abcacdafc!2sGulshan-e-Maymar%2C%20Karachi!5e0!3m2!1sen!2s!4v1761299973159!5m2!1sen!2s'
-        width='600'
-        height='450'
-        style='border:0;'
-        allowfullscreen=''
-        loading='lazy'
-        referrerpolicy='no-referrer-when-downgrade'>
-    </iframe>
-</div>
-<label class='add'>
-    <address>
-        Gulshan-e-Maymar<br>
-        Karachi, Pakistan
-    </address>
-</label>
-`;
+/** Base URL of the main portfolio site (links to the résumé and contact form). */
+const PORTFOLIO_URL = "https://muhammadowaismushtaq.github.io";
 
+/** Public résumé PDF, served by the main portfolio site. */
+const RESUME_URL = `${PORTFOLIO_URL}/assets/resume/Resume%20-%20Muhammad%20Owais%20Mushtaq.pdf`;
 
-// Initialize site
-function startFunction() {
-    setLastSeen();
-    waitAndResponce("intro");
+/** Shortest and longest simulated "typing…" time before a reply appears (ms). */
+const TYPING_DELAY_MIN_MS = 600;
+const TYPING_DELAY_MAX_MS = 1600;
+
+/** Extra typing time per character of the reply, so longer answers "take" a little longer. */
+const TYPING_DELAY_PER_CHAR_MS = 1.5;
+
+/** Buttons shown under the chat so visitors (especially on phones) don't have to type. */
+const QUICK_REPLIES = ["Experience", "Skills", "Projects", "Education", "Résumé", "Contact", "Help"];
+
+/** Short sound played when a message is sent or received. */
+const messageSound = new Audio("assets/sentmessage.mp3");
+
+/* ----------------------------------------
+ * Reply templates (trusted HTML, authored here)
+ * ---------------------------------------- */
+
+/** @type {Record<string, string>} Reusable HTML snippets used by several replies. */
+const SNIPPETS = {
+    helpTip: `<p class="message-tip">💡 Tap an option below, or just ask, e.g. <em>"what are his skills?"</em></p>`,
+    contactButtons: `
+        <div class="link-buttons">
+            <a class="link-button" href="mailto:muhammadowaismushtaq@outlook.com">
+                <img alt="" src="images/email.svg"> muhammadowaismushtaq@outlook.com
+            </a>
+            <a class="link-button" href="https://www.linkedin.com/in/muhammadowaismushtaq/" rel="noopener noreferrer" target="_blank">
+                <img alt="" src="images/linkedin.svg"> LinkedIn
+            </a>
+            <a class="link-button" href="https://github.com/muhammadowaismushtaq" rel="noopener noreferrer" target="_blank">
+                <img alt="" src="images/github.svg"> GitHub
+            </a>
+        </div>`,
+};
+
+/**
+ * Builds the opening message shown when the chat loads (and after "clear").
+ *
+ * @returns {string} Trusted HTML for the welcome message.
+ */
+function buildWelcomeReply() {
+    return `
+        <p>${getTimeOfDayGreeting()}! 👋 I'm <span class="message-heading">Owais's virtual assistant</span>.</p>
+        <p>Owais is a <strong>Senior Software Engineer and tech lead</strong> at Matrix Systems, building
+           wealth-management FinTech for US advisory firms.</p>
+        <p>I can tell you about his experience, skills, projects, education and research, share his résumé,
+           or help you get in touch with him.</p>
+        ${SNIPPETS.helpTip}`;
 }
 
-// Update "last seen" time
-function setLastSeen() {
-    const now = new Date();
-    const hours = String(now.getHours()).padStart(2, "0");
-    const minutes = String(now.getMinutes()).padStart(2, "0");
-    document.getElementById("lastseen").innerText = `last seen today at ${hours}:${minutes}`;
+/**
+ * Intent table: the first intent whose pattern matches the visitor's message wins.
+ * Order matters (more specific intents come first). Each reply is trusted HTML.
+ *
+ * @type {Array<{name: string, pattern: RegExp, reply: () => string}>}
+ */
+const INTENTS = [
+    {
+        name: "clear",
+        pattern: /^(clear|reset|restart|start over)$/,
+        reply: () => "", // handled specially in respondTo()
+    },
+    {
+        name: "help",
+        pattern: /\b(help|menu|options|commands|what can (you|i) (do|ask))\b/,
+        reply: () => `
+            <p>Here's what I can help with 👇</p>
+            <ul>
+                <li><strong>experience</strong>: what Owais works on</li>
+                <li><strong>skills</strong>: his tech stack and tools</li>
+                <li><strong>projects</strong>: products and research he's worked on</li>
+                <li><strong>education</strong>: degrees, research and programs</li>
+                <li><strong>résumé</strong>: view or download his résumé</li>
+                <li><strong>contact</strong>: email, LinkedIn and GitHub</li>
+                <li><strong>about this chat</strong>: how this page was built</li>
+                <li><strong>clear</strong>: start the chat again</li>
+            </ul>
+            <p class="message-tip">You can also say hi, ask how I'm doing, or ask when Owais is available.</p>`,
+    },
+    {
+        name: "aboutThisChat",
+        pattern: /\b(about (this )?(chat|site|page|website)|how (was|is) this (built|made)|source code|this chat)\b/,
+        reply: () => `
+            <p>💡 <span class="message-heading">Behind the scenes</span></p>
+            <p>This chat is plain <strong>HTML, CSS and JavaScript</strong>, with no frameworks, hosted on
+               <strong>GitHub Pages</strong> and styled like a WhatsApp business chat.</p>
+            <p>The answers are written in advance, so I reply instantly and nothing you type is stored or sent anywhere.</p>
+            <p>Peek under the hood 👉 <a href="https://github.com/muhammadowaismushtaq/portfolio-whatsapp" rel="noopener noreferrer" target="_blank">GitHub repo</a></p>`,
+    },
+    {
+        name: "whoAreYou",
+        pattern: /\b(who are you|are you (owais|real|a bot|human|ai)|is this (owais|a bot|real)|bot|robot|assistant|your name)\b/,
+        reply: () => `
+            <p>I'm Owais's <strong>automated assistant</strong>, not Owais himself 🤖</p>
+            <p>I answer the common questions about his work so you don't have to wait. For anything else,
+               you can reach him directly. Type <strong>contact</strong>.</p>`,
+    },
+    {
+        name: "availability",
+        pattern: /\b(availab\w*|free|hire|hiring|freelance|open to|opportunit\w*|collaborat\w*|work with|job|role|position|when can|schedule|meeting|call)\b/,
+        reply: () => `
+            <p>I can't see Owais's calendar, but he's always happy to hear about projects, roles and collaborations. 🙌</p>
+            <p>The best way is to send him a short note about what you have in mind, by email or LinkedIn,
+               and he'll get back to you:</p>
+            ${SNIPPETS.contactButtons}`,
+    },
+    {
+        name: "contact",
+        pattern: /\b(contact|email|e-mail|mail|reach|linkedin|github|get in touch|talk to (him|owais)|message (him|owais))\b/,
+        reply: () => `
+            <p>You can reach Owais directly here 👇 He reads these himself.</p>
+            ${SNIPPETS.contactButtons}
+            <p>Or use the <a href="${PORTFOLIO_URL}/#contact" target="_top">contact form</a> on his website.</p>`,
+    },
+    {
+        name: "resume",
+        pattern: /\b(resume|cv|curriculum)\b/,
+        reply: () => `
+            <a class="resume-card" download href="${RESUME_URL}" rel="noopener noreferrer" target="_blank">
+                <span class="resume-file">
+                    <img alt="" src="images/pdf.png">
+                    <span>Resume - Muhammad Owais Mushtaq.pdf</span>
+                    <img alt="Download" src="images/downloadIcon.svg">
+                </span>
+            </a>`,
+    },
+    {
+        name: "projects",
+        pattern: /\b(projects?|portfolio|work samples?|products?|built|urebal|mars|sketchbook)\b/,
+        reply: () => `
+            <p>Products and research Owais has worked on 👇</p>
+            <ul>
+                <li><a href="https://www.softpak.com/solutions/universal-rebalancer/" rel="noopener noreferrer" target="_blank"><strong>uRebal: backend modernization</strong></a><br>2026 – Present</li>
+                <li><a href="https://www.softpak.com/solutions/urebal-hub/" rel="noopener noreferrer" target="_blank"><strong>uRebal Hub</strong></a><br>Ongoing</li>
+                <li><a href="https://partipris-invest.com/advisor-wealthdesign/" rel="noopener noreferrer" target="_blank"><strong>Advisor Sketchbook</strong></a><br>Oct 2023 – Sep 2025</li>
+                <li><a href="https://www.softpak.com/solutions/managed-accounts-rebalancing-system/" rel="noopener noreferrer" target="_blank"><strong>MARS</strong></a><br>Jun 2022 – Nov 2023</li>
+                <li><a href="https://doi.org/10.21203/rs.3.rs-10346557/v1" rel="noopener noreferrer" target="_blank"><strong>AI-Augmented Agile MVP Development</strong></a> (research)<br>2026</li>
+                <li><a href="https://github.com/muhammadowaismushtaq/brain-tumor-detector" rel="noopener noreferrer" target="_blank"><strong>Brain Tumor Detection</strong></a> (VGG-16, 97.95% accuracy)<br>Dec 2021</li>
+                <li><a href="https://github.com/muhammadowaismushtaq/researches/tree/main/vision-based-human-activity-recognition" rel="noopener noreferrer" target="_blank"><strong>Vision-Based Human Activity Recognition</strong></a> (final year project)</li>
+                <li><a href="https://github.com/muhammadowaismushtaq/atm-cash-predictor" rel="noopener noreferrer" target="_blank"><strong>ATM Cash Predictor</strong></a> (machine learning)</li>
+            </ul>
+            <p class="message-tip">More on <a href="https://github.com/muhammadowaismushtaq" rel="noopener noreferrer" target="_blank">GitHub</a>.</p>`,
+    },
+    {
+        name: "skills",
+        pattern: /\b(skills?|stack|tech|technolog\w*|tools?|languages?|frameworks?|java|spring|angular)\b/,
+        reply: () => `
+            <p>Here's what Owais works with 👇</p>
+            <p><span class="message-heading">Backend &amp; frontend</span><br>
+               Java · Spring Boot · Angular · TypeScript · RabbitMQ · Keycloak · C++ · Python</p>
+            <p><span class="message-heading">Data</span><br>
+               SQL Server · PostgreSQL · MySQL · Liquibase</p>
+            <p><span class="message-heading">Cloud &amp; DevOps</span><br>
+               Docker · Kubernetes · Azure · AWS · GitHub Actions · Jenkins · Bitbucket Pipelines · SonarCloud</p>
+            <p><span class="message-heading">AI-assisted development &amp; delivery</span><br>
+               Claude · GitHub Copilot · Jira · Postman</p>`,
+    },
+    {
+        name: "education",
+        pattern: /\b(education|study|studied|degree|university|fast|nuces|ms|bs|masters?|bachelors?|research\w*|thesis|paper|aspire)\b/,
+        reply: () => `
+            <p>🎓 <span class="message-heading">Education &amp; research</span></p>
+            <ul>
+                <li><strong>MS Software Project Management</strong>, FAST-NUCES · 2024–2026<br>
+                    Thesis: AI-Augmented Agile MVP Development for Lean Tech Startups.</li>
+                <li><strong>BS Computer Science</strong>, FAST-NUCES · 2018–2022<br>
+                    Final year project: Vision-Based Human Activity Recognition (deep learning on video).</li>
+                <li><strong>Research:</strong>
+                    <a href="https://doi.org/10.21203/rs.3.rs-10346557/v1" rel="noopener noreferrer" target="_blank">AI-Augmented Agile MVP Development for Lean Tech Startups</a>,
+                    preprint under review at <em>Innovations in Systems and Software Engineering</em> (Springer).</li>
+                <li><strong>Research assistant</strong>, FAST School of Management · 2025–2026<br>
+                    Co-author of a funded field study on sustainable development in Pakistan's date palm industry (under review).</li>
+                <li><strong>Aspire Leadership Program</strong>, 2024.</li>
+            </ul>`,
+    },
+    {
+        name: "experience",
+        pattern: /\b(experience|about (him|owais)|who is owais|tell me about|background|career|job history|work|company|matrix|years?)\b/,
+        reply: () => `
+            <p>Owais is a <strong>Senior Software Engineer and tech lead</strong> at Matrix Systems, building
+               wealth-management FinTech for US advisory firms.</p>
+            <p>Over 4+ years he's modernized legacy platforms without big-bang risk, built new products from scratch,
+               and set up the pipelines, quality gates and AI-first workflows that let a team ship fast without
+               cutting corners.</p>
+            <ul>
+                <li><strong>4</strong> wealth-management products shipped and scaled</li>
+                <li><strong>5</strong> engineers led as tech lead</li>
+            </ul>
+            <p class="message-tip">Type <strong>projects</strong> to see what he's built.</p>`,
+    },
+    {
+        name: "location",
+        pattern: /\b(where (are you|is he|is owais|do you live)|located|location|based|country|city|time ?zone)\b/,
+        reply: () => `
+            <p>Owais is based in <strong>Pakistan</strong> and builds software for US advisory firms. 🌍</p>`,
+    },
+    {
+        name: "howAreYou",
+        pattern: /\b(how are (you|u)|how r u|how('?s| is) it going|how do you do|what'?s up|wassup|sup)\b/,
+        reply: () => `<p>I'm doing great, thanks for asking! 😊 How can I help you today?</p>`,
+    },
+    {
+        name: "thanks",
+        pattern: /\b(thanks?|thank you|thx|ty|shukriya|appreciate)\b/,
+        reply: () => `<p>You're welcome! 😊 Anything else you'd like to know?</p>`,
+    },
+    {
+        name: "goodbye",
+        pattern: /\b(bye|goodbye|see you|see ya|take care|allah hafiz|khuda hafiz|good night)\b/,
+        reply: () => `<p>Thanks for stopping by! 👋 Have a great day.</p>`,
+    },
+    {
+        name: "salam",
+        pattern: /\b(salam|salaam|assalam\w*|aoa|asalam\w*)\b/,
+        reply: () => `<p>Wa alaikum assalam! 👋 How can I help you today?</p>${SNIPPETS.helpTip}`,
+    },
+    {
+        name: "greeting",
+        pattern: /\b(hi+|hello+|hey+|hiya|yo|greetings|good (morning|afternoon|evening))\b/,
+        reply: () => `<p>${getTimeOfDayGreeting()}! 👋 How can I help you today?</p>${SNIPPETS.helpTip}`,
+    },
+];
+
+/**
+ * Reply used when no intent matches.
+ *
+ * @returns {string} Trusted HTML for the fallback message.
+ */
+function buildFallbackReply() {
+    return `
+        <p>Sorry, I didn't quite catch that 😅 I'm an assistant, so I only know about Owais's work.</p>
+        <p>Try one of the options below, type <strong>help</strong>, or type <strong>contact</strong>
+           to reach Owais directly.</p>`;
 }
 
-// Toggle fullscreen DP
-function closeFullDP() {
-    const dp = document.getElementById("fullScreenDP");
-    dp.style.display = dp.style.display === "flex" ? "none" : "flex";
+/* ----------------------------------------
+ * Element references
+ * ---------------------------------------- */
+
+const chatBody = document.querySelector("[data-chat-body]");
+const messageList = document.querySelector("[data-message-list]");
+const contactStatus = document.querySelector("[data-contact-status]");
+const quickRepliesContainer = document.querySelector("[data-quick-replies]");
+const sendForm = document.querySelector("[data-send-form]");
+const messageInput = document.getElementById("messageInput");
+const photoViewer = document.querySelector("[data-photo-viewer]");
+const openPhotoButton = document.querySelector("[data-open-photo]");
+const closePhotoButton = document.querySelector("[data-close-photo]");
+
+/**
+ * Promise chain that makes replies appear one after another, in order, even if the
+ * visitor sends several messages quickly.
+ *
+ * @type {Promise<void>}
+ */
+let replyQueue = Promise.resolve();
+
+/* ----------------------------------------
+ * Helpers
+ * ---------------------------------------- */
+
+/**
+ * Formats a time as HH:MM (24-hour, zero-padded), like WhatsApp message timestamps.
+ *
+ * @param {Date} [date=new Date()] - The time to format.
+ * @returns {string} The formatted time, e.g. "09:05".
+ */
+function formatMessageTime(date = new Date()) {
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
 }
 
-
-function openFullScreenDP() {
-    const dp = document.getElementById("fullScreenDP");
-    dp.style.display = dp.style.display === "flex" ? "none" : "flex";
+/**
+ * Returns "Good morning", "Good afternoon" or "Good evening" for the visitor's local time.
+ *
+ * @returns {string} A greeting that matches the time of day.
+ */
+function getTimeOfDayGreeting() {
+    const hour = new Date().getHours();
+    if (hour < 12) {
+        return "Good morning";
+    }
+    return hour < 18 ? "Good afternoon" : "Good evening";
 }
 
-// Send message on Enter
-function isEnter(event) {
-    if (event.keyCode === 13) sendMsg();
+/**
+ * Returns a promise that resolves after the given delay.
+ *
+ * @param {number} delayInMilliseconds - How long to wait.
+ * @returns {Promise<void>} Resolves once the delay has passed.
+ */
+function waitFor(delayInMilliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, delayInMilliseconds));
 }
 
-function clearChat() {
-    document.getElementById("listUL").innerHTML = "";
-    waitAndResponce('intro');
+/**
+ * Plays the message sound. Browsers may block audio until the visitor has interacted with
+ * the page; that rejection is expected and safely ignored.
+ *
+ * @returns {void}
+ */
+function playMessageSound() {
+    messageSound.currentTime = 0;
+    messageSound.play().catch(() => {
+        // Autoplay blocked or audio unavailable: the chat works fine without sound.
+    });
 }
 
-function playSound() {
-    audio.play();
+/**
+ * Scrolls the message area to the newest message.
+ *
+ * @returns {void}
+ */
+function scrollToLatestMessage() {
+    chatBody.scrollTop = chatBody.scrollHeight;
 }
 
-// Send chat message
-function sendMsg() {
-    const input = document.getElementById("inputMSG");
-    const text = input.value.trim();
-    if (!text) return;
-
-    const now = new Date();
-    const hours = String(now.getHours()).padStart(2, "0");
-    const minutes = String(now.getMinutes()).padStart(2, "0");
-
-    const li = document.createElement("li");
-    const msgDiv = document.createElement("div");
-    const textDiv = document.createElement("div");
-    const timeLabel = document.createElement("label");
-
-    msgDiv.className = "sent";
-    textDiv.className = "green";
-    timeLabel.className = "dateLabel";
-
-    textDiv.innerText = text;
-    timeLabel.innerText = `${hours}:${minutes}`;
-    textDiv.appendChild(timeLabel);
-    msgDiv.appendChild(textDiv);
-    li.appendChild(msgDiv);
-
-    document.getElementById("listUL").appendChild(li);
-    const chatBox = document.getElementById("chatting");
-    chatBox.scrollTop = chatBox.scrollHeight;
-
-    setTimeout(() => waitAndResponce(text), 1500);
-    input.value = "";
-    playSound();
+/**
+ * Lowercases the visitor's message and strips accents and punctuation so patterns match
+ * reliably (e.g. "Résumé!" becomes "resume").
+ *
+ * @param {string} rawText - The message exactly as typed.
+ * @returns {string} The normalized text.
+ */
+function normalizeMessage(rawText) {
+    return rawText
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .replace(/[’']/g, "'")
+        .replace(/[^\p{L}\p{N}' ]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 }
 
-function sendTextMessage(textToSend) {
-    setTimeout(setLastSeen, 1000);
-    var date = new Date();
-    var myLI = document.createElement("li");
-    var myDiv = document.createElement("div");
-    var greendiv = document.createElement("div");
-    var dateLabel = document.createElement("label");
-    dateLabel.setAttribute("id", "sentlabel");
-    dateLabel.id = "sentlabel";
-    dateLabel.innerText = date.getHours() + ":" + date.getMinutes();
-    myDiv.setAttribute("class", "received");
-    greendiv.setAttribute("class", "grey");
-    greendiv.innerHTML = textToSend;
-    myDiv.appendChild(greendiv);
-    myLI.appendChild(myDiv);
-    greendiv.appendChild(dateLabel);
-    document.getElementById("listUL").appendChild(myLI);
-    var s = document.getElementById("chatting");
-    s.scrollTop = s.scrollHeight;
-    playSound();
+/**
+ * Finds the intent that matches the visitor's message.
+ *
+ * @param {string} rawText - The message exactly as typed.
+ * @returns {{name: string, reply: () => string}|null} The matching intent, or null if none matches.
+ */
+function findMatchingIntent(rawText) {
+    const normalizedText = normalizeMessage(rawText);
+    return INTENTS.find((intent) => intent.pattern.test(normalizedText)) || null;
 }
 
-function waitAndResponce(inputText) {
-    var lastSeen = document.getElementById("lastseen");
-    lastSeen.innerText = "typing...";
-    switch (inputText.toLowerCase().trim()) {
-        case "intro":
-            setTimeout(() => {
-                sendTextMessage(
-                    "Hey, I’m <span class='bold'><a class='alink'>Owais</a></span> 👋🏻<br><br>" +
-                    "I’m a <span class='bold'>Software Development Engineer</span> with over 3 years of experience building big-deal apps (<span class='bold'>SaaS</span>) using <span class='bold'>Java/Spring Boot</span> on the back end and <span class='bold'>Angular</span> for the cool front end.<br><br>" +
-                    "I’ve led full-cycle projects — from architecture design and sprint planning to mentoring engineers and delivering production-ready solutions. 🚀<br><br>" +
-                    "I'm all about clean code, awesome automation (<span class='bold'>DevOps</span>), and building reliable, scalable systems. Let's get things done! ✨<br><br>" +
-                    "👉 Type <span class='bold'>'help'</span> anytime to explore more about me!"
-                );
-            }, 2000);
-            break;
+/* ----------------------------------------
+ * Rendering
+ * ---------------------------------------- */
 
-        case "help":
-            sendTextMessage(
-                "<span class='sk'>" +
-                "Here are some quick commands to learn more about me 👇<br><br>" +
-                "<span class='bold'>'skills'</span> – View my technical skills<br>" +
-                "<span class='bold'>'resume'</span> – Download or view my resume<br>" +
-                "<span class='bold'>'education'</span> – See my academic background<br>" +
-                "<span class='bold'>'projects'</span> – Explore my featured projects<br>" +
-                "<span class='bold'>'contact'</span> – Get my contact details<br>" +
-                "<span class='bold'>'address'</span> – View my current location<br>" +
-                "<span class='bold'>'about'</span> – Learn about this site<br>" +
-                "<span class='bold'>'clear'</span> – Clear the chat<br><br>" +
-                "<span class='tip'>💡 Tip: You can type ‘help’ anytime to see this list again.</span>" +
-                "</span>"
-            );
-            break;
+/**
+ * Creates an empty chat bubble (list item + bubble + timestamp) and adds it to the chat.
+ *
+ * @param {"sent"|"received"} direction - Whether the visitor sent it or the assistant did.
+ * @returns {HTMLElement} The bubble element, ready for content to be inserted before its timestamp.
+ */
+function appendMessageBubble(direction) {
+    const listItem = document.createElement("li");
+    listItem.className = `message message--${direction}`;
 
-        case "resume":
-            sendTextMessage(resumeString);
-            break;
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
 
-        case "skills":
-            sendTextMessage(
-                "<span class='sk'>" +
-                "Here’s a quick look at what I work with 👇<br><br>" +
+    const timeLabel = document.createElement("time");
+    timeLabel.className = "message-time";
+    timeLabel.textContent = formatMessageTime();
 
-                "<span class='bold'>Code & Frameworks</span><br>" +
-                "Java (Spring Boot) · TypeScript (Angular) · SQL · Hibernate · JPA<br>" +
-                "RESTful APIs · OpenAPI/Swagger · Unit Testing (JUnit)<br><br>" +
+    bubble.appendChild(timeLabel);
+    listItem.appendChild(bubble);
+    messageList.appendChild(listItem);
+    return bubble;
+}
 
-                "<span class='bold'>Cloud & DevOps</span><br>" +
-                "GitHub Actions · Jenkins · Bitbucket Pipelines · Docker · Kubernetes " +
-                "SonarCloud · Jacoco · Azure · AWS<br><br>" +
+/**
+ * Shows a message typed by the visitor. The text is inserted as plain text (never as HTML).
+ *
+ * @param {string} visitorText - What the visitor typed.
+ * @returns {void}
+ */
+function showVisitorMessage(visitorText) {
+    const bubble = appendMessageBubble("sent");
+    const textElement = document.createElement("p");
+    textElement.textContent = visitorText;
+    bubble.insertBefore(textElement, bubble.lastChild);
+    scrollToLatestMessage();
+}
 
-                "<span class='bold'>Data & Reporting</span><br>" +
-                "SQL Server · Stored Procedures · Query Optimization · JasperReports<br><br>" +
+/**
+ * Shows a reply from the assistant.
+ *
+ * @param {string} replyHtml - Trusted HTML from one of the reply templates in this file.
+ * @returns {void}
+ */
+function showAssistantMessage(replyHtml) {
+    const bubble = appendMessageBubble("received");
+    const contentElement = document.createElement("div");
+    contentElement.innerHTML = replyHtml; // trusted template only, never visitor input
+    bubble.insertBefore(contentElement, bubble.lastChild);
+    scrollToLatestMessage();
+}
 
-                "<span class='bold'>Process & Delivery</span><br>" +
-                "Agile (Scrum/Kanban) · Requirement Elicitation & Validation · Process Definition for CMMI & ISO Standards<br><br>" +
-                "</span>"
-            );
-            break;
+/**
+ * Shows the animated "typing" dots and the "typing…" status, and returns a function that removes them.
+ *
+ * @returns {() => void} Call to hide the typing indicator again.
+ */
+function showTypingIndicator() {
+    contactStatus.textContent = "typing…";
 
-        case "education":
-            sendTextMessage(
-                "Academics Checkpoint! 🎓<br><br>" +
-                "<span class='bold'>Bachelors in Computer Science</span><br>" +
-                "<a class='alink' href='https://www.nu.edu.pk/' target='_blank'>National University of Computer and Emerging Sciences (FAST)</a><br>" +
-                "June 2018 – July 2022<br>" +
-                "CGPA: 3.02 / 4.0"
-            );
-            break;
+    const listItem = document.createElement("li");
+    listItem.className = "message message--received";
+    listItem.setAttribute("aria-label", "Assistant is typing");
+    listItem.innerHTML = `<div class="message-bubble"><span class="typing-indicator"><span></span><span></span><span></span></span></div>`;
+    messageList.appendChild(listItem);
+    scrollToLatestMessage();
 
-        case "address":
-            sendTextMessage(addressString);
-            break;
+    return () => {
+        listItem.remove();
+        contactStatus.textContent = "online";
+    };
+}
 
-        case "clear":
-            clearChat();
-            break;
+/**
+ * Renders the quick-reply buttons under the chat.
+ *
+ * @returns {void}
+ */
+function renderQuickReplies() {
+    QUICK_REPLIES.forEach((label) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quick-reply";
+        button.textContent = label;
+        button.addEventListener("click", () => handleVisitorMessage(label));
+        quickRepliesContainer.appendChild(button);
+    });
+}
 
-        case "about":
-            sendTextMessage(
-                "💡 <span class='bold'>Behind the Scenes</span><br><br>" +
-                "This site runs on pure <span class='bold'>HTML, CSS</span>, and <span class='bold'>JavaScript</span> — no templates, no frameworks, just custom code.<br><br>" +
-                "Every section you see (like this chat 👇) is powered by a few hundred lines of JavaScript and lots of late-night debugging ☕😅<br><br>" +
-                "It’s hosted on <span class='bold'>GitHub Pages</span> and designed to feel like a casual WhatsApp chat — because why not make portfolios fun?<br><br>" +
-                "🚀 Want to peek under the hood? Check out the code here 👉 <a class='alink' target='_blank' href='https://github.com/muhammadowaismushtaq/portfolio-whatsapp'><span class='bold'>GitHub Repo</span></a>"
-            );
-            break;
+/* ----------------------------------------
+ * Conversation flow
+ * ---------------------------------------- */
 
-        case "contact":
-            sendTextMessage(contactString);
-            break;
+/**
+ * Simulates typing for a moment that scales with the reply length, then shows the reply.
+ *
+ * @param {string} replyHtml - Trusted HTML to show once "typing" finishes.
+ * @returns {Promise<void>} Resolves when the reply is on screen.
+ */
+async function replyAfterTyping(replyHtml) {
+    const hideTypingIndicator = showTypingIndicator();
+    const typingDelay = Math.min(
+        TYPING_DELAY_MAX_MS,
+        TYPING_DELAY_MIN_MS + replyHtml.length * TYPING_DELAY_PER_CHAR_MS
+    );
+    await waitFor(typingDelay);
+    hideTypingIndicator();
+    showAssistantMessage(replyHtml);
+    playMessageSound();
+}
 
-        case "projects":
-            sendTextMessage(
-                "Some cool things I've built! 👇<br><br>" +
+/**
+ * Clears the conversation and starts again with the welcome message.
+ *
+ * @returns {Promise<void>} Resolves once the welcome message is shown.
+ */
+function restartConversation() {
+    messageList.replaceChildren();
+    return replyAfterTyping(buildWelcomeReply());
+}
 
-                "<span class='bold'>1. ATM Cash Predictor 💸</span><br>" +
-                "Used <span class='bold'>Machine Learning</span> (Linear Regression & XGBoost) to predict optimal ATM cash requirements — minimizing storage costs and avoiding cashouts.<br>" +
-                "<a class='alink' target='_blank' href='https://github.com/muhammadowaismushtaq/atm-cash-predictor'>View Project ↗</a><br><br>" +
+/**
+ * Works out the right answer to a visitor message and queues it.
+ *
+ * @param {string} visitorText - What the visitor typed (or the quick reply they tapped).
+ * @returns {void}
+ */
+function respondTo(visitorText) {
+    const intent = findMatchingIntent(visitorText);
 
-                "<span class='bold'>2. Human Activity Recognition (FYP) 🏃‍♂️</span><br>" +
-                "My Final Year Project — applied <span class='bold'>Deep Learning</span> (CNN, InceptionV3, etc.) to enable video-based recognition of human actions.<br>" +
-                "<a class='alink' target='_blank' href='https://github.com/muhammadowaismushtaq/researches/tree/main/vision-based-human-activity-recognition'>View Project ↗</a><br><br>" +
+    replyQueue = replyQueue.then(() => {
+        if (intent && intent.name === "clear") {
+            return restartConversation();
+        }
+        return replyAfterTyping(intent ? intent.reply() : buildFallbackReply());
+    });
+}
 
-                "<span class='bold'>3. Custom Brain Tumor Detector 🧠</span><br>" +
-                "Developed a CNN-based brain tumor detection model, enhanced accuracy with a pre-trained <span class='bold'>VGG16</span> architecture.<br>" +
-                "<a class='alink' target='_blank' href='https://github.com/muhammadowaismushtaq/brain-tumor-detector'>View Project ↗</a><br><br>" +
+/**
+ * Handles one visitor message: shows it, plays the send sound and queues the reply.
+ *
+ * @param {string} rawText - The message as typed.
+ * @returns {void}
+ */
+function handleVisitorMessage(rawText) {
+    const visitorText = rawText.trim();
+    if (!visitorText) {
+        return;
+    }
+    showVisitorMessage(visitorText);
+    playMessageSound();
+    respondTo(visitorText);
+}
 
-                "Check out more of my projects on GitHub 👇<br>" +
-                "<div class='social'>" +
-                "<a target='_blank' href='https://github.com/muhammadowaismushtaq'>" +
-                "<div class='socialItem'>" +
-                "<img class='socialItemI' src='images/github.svg' alt='GitHub'>" +
-                "</div>" +
-                "</a>" +
-                "</div>"
-            );
-            break;
+/**
+ * Handles the send form: sends the typed message and clears the input.
+ *
+ * @param {SubmitEvent} submitEvent - The form submission (Enter key or send button).
+ * @returns {void}
+ */
+function handleSendFormSubmit(submitEvent) {
+    submitEvent.preventDefault();
+    handleVisitorMessage(messageInput.value);
+    messageInput.value = "";
+}
 
-        default:
-            setTimeout(() => {
-                sendTextMessage("Hey, I couldn’t catch that 😅<br>Type <span class='bold'>'help'</span> to see what I can do!"
-                );
-            }, 2000);
-            break;
+/* ----------------------------------------
+ * Profile photo viewer
+ * ---------------------------------------- */
+
+/**
+ * Opens the full-screen profile photo.
+ *
+ * @returns {void}
+ */
+function openPhotoViewer() {
+    photoViewer.hidden = false;
+    closePhotoButton.focus();
+}
+
+/**
+ * Closes the full-screen profile photo and returns focus to the header photo.
+ *
+ * @returns {void}
+ */
+function closePhotoViewer() {
+    photoViewer.hidden = true;
+    openPhotoButton.focus();
+}
+
+/**
+ * Closes the photo viewer on Escape.
+ *
+ * @param {KeyboardEvent} keyboardEvent - Any key press on the page.
+ * @returns {void}
+ */
+function handleEscapeKey(keyboardEvent) {
+    if (keyboardEvent.key === "Escape" && !photoViewer.hidden) {
+        closePhotoViewer();
+    }
+}
+
+/* ----------------------------------------
+ * Start-up
+ * ---------------------------------------- */
+
+/**
+ * Wires up all event listeners and shows the welcome message.
+ *
+ * @returns {void}
+ */
+function initializeChat() {
+    renderQuickReplies();
+
+    sendForm.addEventListener("submit", handleSendFormSubmit);
+    openPhotoButton.addEventListener("click", openPhotoViewer);
+    closePhotoButton.addEventListener("click", closePhotoViewer);
+    photoViewer.addEventListener("click", (clickEvent) => {
+        // Clicking the dark backdrop (not the photo itself) closes the viewer.
+        if (clickEvent.target === photoViewer) {
+            closePhotoViewer();
+        }
+    });
+    document.addEventListener("keydown", handleEscapeKey);
+
+    // Focus the input on desktop only: on phones it would pop up the keyboard immediately.
+    if (window.matchMedia("(pointer: fine)").matches) {
+        messageInput.focus();
     }
 
+    replyQueue = replyQueue.then(() => replyAfterTyping(buildWelcomeReply()));
 }
+
+initializeChat();
