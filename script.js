@@ -558,13 +558,17 @@ function openPhotoViewer() {
 }
 
 /**
- * Closes the full-screen profile photo and returns focus to the header photo.
+ * Closes the full-screen profile photo.
  *
+ * @param {boolean} [restoreFocus=true] - Move keyboard focus back to the header photo. Skipped
+ *        when the host page closes the chat pop-up, since the chat is no longer visible then.
  * @returns {void}
  */
-function closePhotoViewer() {
+function closePhotoViewer(restoreFocus = true) {
     photoViewer.hidden = true;
-    openPhotoButton.focus();
+    if (restoreFocus) {
+        openPhotoButton.focus();
+    }
 }
 
 /**
@@ -580,6 +584,43 @@ function handleEscapeKey(keyboardEvent) {
 }
 
 /* ----------------------------------------
+ * Embedding in the main portfolio site
+ * ---------------------------------------- */
+
+/** Message the host page sends when it closes the chat pop-up. */
+const HOST_CHAT_CLOSED_MESSAGE = "chat-modal-closed";
+
+/**
+ * Tells whether this page is running inside an iframe (the main site's chat pop-up).
+ * Accessing window.top can throw for some cross-origin hosts; that also means "embedded".
+ *
+ * @returns {boolean} True when the chat is embedded in another page.
+ */
+function isEmbeddedInHostPage() {
+    try {
+        return window.self !== window.top;
+    } catch (crossOriginError) {
+        return true;
+    }
+}
+
+/**
+ * Resets transient UI when the host page closes the pop-up, so reopening it shows the chat
+ * rather than a photo viewer left open. Only messages from this same origin are trusted.
+ *
+ * @param {MessageEvent} messageEvent - A message posted to this window.
+ * @returns {void}
+ */
+function handleHostMessage(messageEvent) {
+    if (messageEvent.origin !== window.location.origin) {
+        return;
+    }
+    if (messageEvent.data && messageEvent.data.type === HOST_CHAT_CLOSED_MESSAGE) {
+        closePhotoViewer(false);
+    }
+}
+
+/* ----------------------------------------
  * Start-up
  * ---------------------------------------- */
 
@@ -589,18 +630,24 @@ function handleEscapeKey(keyboardEvent) {
  * @returns {void}
  */
 function initializeChat() {
+    if (isEmbeddedInHostPage()) {
+        // CSS uses this to fill the pop-up's full width and keep clear of the host's close button.
+        document.documentElement.classList.add("is-embedded");
+    }
+
     renderQuickReplies();
 
     sendForm.addEventListener("submit", handleSendFormSubmit);
     openPhotoButton.addEventListener("click", openPhotoViewer);
-    closePhotoButton.addEventListener("click", closePhotoViewer);
+    closePhotoButton.addEventListener("click", () => closePhotoViewer());
+    // Tapping anywhere in the viewer (backdrop or the photo itself) closes it, like WhatsApp.
     photoViewer.addEventListener("click", (clickEvent) => {
-        // Clicking the dark backdrop (not the photo itself) closes the viewer.
-        if (clickEvent.target === photoViewer) {
+        if (clickEvent.target !== closePhotoButton) {
             closePhotoViewer();
         }
     });
     document.addEventListener("keydown", handleEscapeKey);
+    window.addEventListener("message", handleHostMessage);
 
     // Focus the input on desktop only: on phones it would pop up the keyboard immediately.
     if (window.matchMedia("(pointer: fine)").matches) {

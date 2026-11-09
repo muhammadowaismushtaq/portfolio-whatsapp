@@ -453,13 +453,31 @@ a:is(:hover, :focus-visible) {
     border-radius: 10px;
 }
 
+/* Top-left, like WhatsApp's back button, so it never sits under the host page's close button. */
 .photo-viewer-close {
     position: absolute;
     top: 12px;
-    right: 16px;
+    left: 16px;
+    width: 44px;
+    height: 44px;
     font-size: 36px;
     line-height: 1;
     color: var(--text-primary);
+}
+
+
+/*-----------------------------------*\
+ * #EMBEDDED IN THE MAIN SITE'S POP-UP
+\*-----------------------------------*/
+
+/* The pop-up decides the width, so use all of it instead of a centred column. */
+.is-embedded .chat-app {
+    max-width: none;
+}
+
+/* Leave room on the right of the header for the host page's close (×) button. */
+.is-embedded .chat-header {
+    padding-right: 56px;
 }
 
 
@@ -470,7 +488,7 @@ a:is(:hover, :focus-visible) {
 @media (min-width: 768px) {
 
     .message-bubble {
-        max-width: 65%;
+        max-width: min(65%, 720px); /* readable line length even in a very wide pop-up */
     }
 
     .quick-replies {
